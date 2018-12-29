@@ -1,3 +1,11 @@
+# 算法说明
+
+添加了Microbial Genetic Algorithm算法。没有用局部搜索，所以解的收敛非常依赖参数。还需要改进。
+
+# 注意事项
+
+把Simulator设为启动项，便于调试。
+
 # 目录组织
 
 - **Solver/**
