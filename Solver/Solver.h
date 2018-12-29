@@ -226,10 +226,8 @@ private:
 	int delete_malloc();
 	// 初始化计算 int** comflictFlights , int* conflictNum
 	int init_conflict_flights();
-public:
 	// 初始化种群
 	int init_pop();
-private:
 	// //求适应度的函数 越小越好 返回适应度的值
 	int get_fitness(int individual_idx);
 	// 交叉算子
