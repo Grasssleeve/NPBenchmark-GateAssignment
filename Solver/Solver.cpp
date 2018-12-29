@@ -14,7 +14,7 @@
 #define CROSS_RATE 80  //mating probility 为 80%
 #define MUTATE_RATE 1  //mutattion probility 为 1%
 #define POP_SIZE 100
-#define N_GENERATIONS 20000
+#define N_GENERATIONS 100 //根据flight数目来定 100*flightNum
 #define N_COMPARATION 10	//每次进化时选择的次数
 #define M 10             //计算fitenss时，放大Hx需要的值
 
@@ -605,9 +605,9 @@ int szx::Solver::run_mga()
 		best_fitness=envolve(winner_idx);
 		generation++;
 
-		cout <<"best_fitness="<< best_fitness << endl;
+		//cout <<"best_fitness="<< best_fitness << endl;
 		//cout << "generation=" << generation << endl;
-	} while (best_fitness!=0  && (generation<N_GENERATIONS || best_fitness>flightNum ));
+	} while (best_fitness!=0  && (generation<N_GENERATIONS*flightNum || best_fitness>flightNum ));
 
 	//while (best_fitness!=0 && !timer.isTimeOut() && (generation<N_GENERATIONS || best_fitness>flightNum ));
 	//cout <<"best_fitness="<< best_fitness << endl;
