@@ -11,6 +11,13 @@
 #include <cmath>
 
 
+#define CROSS_RATE 80  //mating probility 为 80%
+#define MUTATE_RATE 1  //mutattion probility 为 1%
+#define POP_SIZE 100
+#define N_GENERATIONS 20000
+#define N_COMPARATION 10	//每次进化时选择的次数
+#define M 10             //计算fitenss时，放大Hx需要的值
+
 using namespace std;
 
 
@@ -280,15 +287,329 @@ bool Solver::optimize(Solution &sln, ID workerId) {
 
 
     // TODO[0]: replace the following random assignment with your own algorithm.
-    for (ID f = 0; !timer.isTimeOut() && (f < flightNum); ++f) {
-        assignments[f] = rand.pick(gateNum);
-        if (assignments[f] < bridgeNum) { ++sln.flightNumOnBridge; } // record obj.
-    }
+    //for (ID f = 0; !timer.isTimeOut() && (f < flightNum); ++f) {
+    //    assignments[f] = rand.pick(gateNum);
+    //    if (assignments[f] < bridgeNum) { ++sln.flightNumOnBridge; } // record obj.
+    //}
 
+	this->gateNum = gateNum;
+	this->flightNum = flightNum;
+	this->bridgeNum = bridgeNum;
+
+	int pop_idx = run_mga();
+
+
+	for (ID f = 0;  f < flightNum; ++f) {
+		assignments[f] = pop[pop_idx][f];
+		if (assignments[f] < bridgeNum) { ++sln.flightNumOnBridge; } // record obj.
+	}
+
+	delete_malloc();
+	/////////////////////////////////////////////////////////////////////////////////////
 
     Log(LogSwitch::Szx::Framework) << "worker " << workerId << " ends." << endl;
     return status;
 }
 #pragma endregion Solver
 
+}
+
+
+// 初始化 int** pop , int* comflictFlights, int* comflictNum
+int szx::Solver::init_malloc()
+{
+	pop = new int*[POP_SIZE];
+	for (size_t i = 0; i < POP_SIZE; i++) {
+		pop[i] = new int[flightNum];
+	}
+
+	conflictFlights = new int*[flightNum];
+	for (size_t i = 0; i < flightNum; i++) {
+		conflictFlights[i] = new int[flightNum - 1];
+		memset(conflictFlights[i], 0, sizeof(int)*(flightNum - 1));
+	}
+
+	conflictNum = new int[flightNum];
+	memset(conflictNum, 0, sizeof(int)*flightNum);
+	return 0;
+}
+
+
+// 释放 int** pop , int* comflictFlights, int* comflictNum
+int szx::Solver::delete_malloc()
+{
+	for (size_t i = 0; i < POP_SIZE; i++) {
+		delete[] pop[i];
+	}
+	delete[] pop;
+
+	for (size_t i = 0; i < flightNum; i++) {
+		delete[] conflictFlights[i];
+	}
+	delete[] conflictFlights;
+
+	delete[] conflictNum;
+	return 0;
+}
+
+
+// 初始化计算 int** comflictFlights , int* conflictNum
+int szx::Solver::init_conflict_flights()
+{
+	int* f_beginTime_sort = new int[flightNum];
+	for (int i = 0; i < flightNum; i++)
+	{
+		f_beginTime_sort[i] = i;
+	}
+
+	//按照起飞时间排序
+	size_t max = flightNum - 1;
+	for (size_t i = 0; i < max; i++)
+	{
+		for (size_t j = 0; j < max-i; j++)
+		{
+			int time1 = input.flights(f_beginTime_sort[j]).turnaround().begin();
+			int time2= input.flights(f_beginTime_sort[j+1]).turnaround().begin();
+			if (time1 > time2)
+			{
+				swap(f_beginTime_sort[j], f_beginTime_sort[j + 1]);
+			}
+		}
+	}
+
+
+	for (size_t i = 0; i < flightNum - 1; i++)
+	{
+		int f_first = f_beginTime_sort[i];
+		int f_first_endTime = input.flights(f_first).turnaround().end() + 30; //算上30分钟的间隔
+		for (size_t j = i + 1; j < flightNum; j++)
+		{
+			int f_second = f_beginTime_sort[j];			
+			int f_second_beginTime = input.flights(f_second).turnaround().begin();
+			if (f_first_endTime > f_second_beginTime)
+			{
+				conflictFlights[f_second][conflictNum[f_second]] = f_first;
+				conflictFlights[f_first][conflictNum[f_first]] = f_second;
+
+				conflictNum[f_first]++;
+				conflictNum[f_second]++;
+			}
+		}
+	}
+
+	delete[] f_beginTime_sort;
+	return 0;
+}
+
+
+// 初始化种群
+int szx::Solver::init_pop()
+{
+	for (size_t i = 0; i < POP_SIZE; i++) {
+		int* h_pop = pop[i];
+		for (size_t j = 0; j < flightNum; j++) {
+			int gate;
+			//		set<int> gate_incompatible = *(incompatibleGates + j);
+			//		while (gate_incompatible.count(gate = rand() % gateNum));
+
+			while (true)
+			{
+				gate = rand.pick(gateNum);
+				if (aux.isCompatible[j][gate])
+				{
+					break;
+				}
+			}
+			h_pop[j] = gate;
+		}
+	}
+	return 0;
+}
+
+
+// //求适应度的函数 越小越好 返回适应度的值
+int szx::Solver::get_fitness(int individual_idx)
+{
+
+	int* individual = pop[individual_idx];
+	//先计算FX；即远机位数量
+	int Fx = 0;
+	for (size_t i = 0; i < flightNum; i++)
+	{
+		if (individual[i] >= bridgeNum)
+		{
+			Fx++;
+		}
+	}
+
+	//再计算HX；即冲突的飞机
+	int Hx = 0;
+	for (size_t i = 0; i < flightNum; i++)
+	{
+		int hx = 0;
+		int gate = individual[i];
+		int* h_conflict_flights = conflictFlights[i];
+		for (size_t j = 0; j < conflictNum[i]; j++)
+		{
+			int conflictFlight = h_conflict_flights[j];
+			int gate_comflictFlight = individual[conflictFlight];  //冲突的飞机
+			if (gate == gate_comflictFlight)
+			{
+				hx++;
+			}
+		}
+
+		Hx += hx * hx;  //hx平方再相加
+	}
+
+	int sum = 0;
+	sum = Fx + M * (flightNum - bridgeNum)*Hx;  //保证Hx比远机位的影响大
+	return sum; //返回计算的值
+}
+
+
+
+// 变异
+int szx::Solver::mutate(int loser_idx)
+{
+	int* loser = pop[loser_idx];
+	bool* mutation_idx = new bool[flightNum];
+	for (size_t i = 0; i < flightNum; i++)
+	{
+		if (rand.isPicked(MUTATE_RATE, 100))
+		{
+			mutation_idx[i] = true;
+		}
+		else
+		{
+			mutation_idx[i] = false;
+		}
+	}
+
+	for (size_t i = 0; i < flightNum; i++)
+	{
+		if (mutation_idx[i])
+		{
+			int gate;
+			//		set<int> gate_incompatible = *(incompatibleGates + i);
+			//		while (gate_incompatible.count(gate = rand() % gateNum));
+
+			while (true)
+			{
+				gate = rand.pick(gateNum);
+				if (aux.isCompatible[i][gate])
+				{
+					break;
+				}
+			}
+
+			loser[i] = gate;
+		}
+	}
+
+	delete[] mutation_idx;
+	return 0;
+}
+
+
+// 杂交loser和winner
+int szx::Solver::crossover(int* loser_winner_idx)
+{
+	bool* cross_idx = new bool[flightNum];
+
+	for (size_t i = 0; i < flightNum; i++) {
+		if (rand.isPicked(CROSS_RATE, 100)) {
+			cross_idx[i] = true;
+		}
+		else {
+			cross_idx[i] = false;
+		}
+	}
+
+
+	int* loser = pop[loser_winner_idx[0]];
+	int* winner = pop[loser_winner_idx[1]];
+
+	for (size_t i = 0; i < flightNum; i++) {
+		if (cross_idx[i]) {
+			loser[i] = winner[i];
+		}
+	}
+
+	delete[] cross_idx;
+	return 0;
+}
+
+
+// 返回best_fitness的值
+int szx::Solver::envolve(int& winner_idx)
+{
+	int fitness[2];
+	for (size_t i = 0; i < N_COMPARATION; i++)
+	{
+
+		//保证loser与winner不同
+
+		int loser_winner_idx[2];
+		loser_winner_idx[0]= rand.pick(POP_SIZE);
+		while (true)
+		{
+			loser_winner_idx[1] = rand.pick(POP_SIZE);
+			if (loser_winner_idx[1] != loser_winner_idx[0])
+			{
+				break;
+			}
+		}
+
+		
+		fitness[0] = get_fitness(loser_winner_idx[0]);
+		fitness[1] = get_fitness(loser_winner_idx[1]);
+
+		if (fitness[0]< fitness[1])//fitness越小越好,
+		{
+			swap(fitness[0], fitness[1]);
+			swap(loser_winner_idx[0], loser_winner_idx[1]);
+		}
+
+
+		winner_idx = loser_winner_idx[1];
+
+		if (fitness[1]==0)
+		{
+			return fitness[1];
+
+		}
+
+		crossover( loser_winner_idx);
+
+		//loser变异
+		mutate(loser_winner_idx[0]);
+
+	}
+
+
+	return fitness[1];
+}
+
+
+int szx::Solver::run_mga()
+{
+	init_malloc();
+	init_pop();
+	init_conflict_flights();
+	int winner_idx = 0;
+	int generation = 0;
+	int best_fitness;
+	do
+	{
+		best_fitness=envolve(winner_idx);
+		generation++;
+
+		cout <<"best_fitness="<< best_fitness << endl;
+		//cout << "generation=" << generation << endl;
+	} while (best_fitness!=0  && (generation<N_GENERATIONS || best_fitness>flightNum ));
+
+	//while (best_fitness!=0 && !timer.isTimeOut() && (generation<N_GENERATIONS || best_fitness>flightNum ));
+	//cout <<"best_fitness="<< best_fitness << endl;
+	return winner_idx;
 }
